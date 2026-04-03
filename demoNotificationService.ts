@@ -1,18 +1,8 @@
-import type { EventService } from '@enhearten/event-module';
 import type { ScheduledEventService, ScheduledCalendarEvent } from '@enhearten/calendar-module';
+import type { NotificationDispatch, NotificationMiniModule } from '@enhearten/notification-contracts';
 
 /** Must match the demo notification slot in `demoEventContentModules.tsx` */
 export const DEMO_NOTIFICATION_SLOT_TYPE = 'demo.notification';
-
-type NotificationDispatch = {
-  eventId: string;
-  userId: string;
-  platform: 'mobile' | 'desktop';
-  moduleId: string;
-  reminderAt: Date;
-  title: string;
-  body?: string;
-};
 
 function scheduledEventsToNotificationDispatches(
   events: ScheduledCalendarEvent[],
@@ -65,20 +55,31 @@ function scheduledEventsToNotificationDispatches(
   return out;
 }
 
+export type DemoNotificationDispatchService = {
+  previewNotificationDispatches(args: {
+    userId: string;
+    start: Date;
+    end: Date;
+    now?: Date;
+  }): Promise<{ dispatches: NotificationDispatch[] }>;
+  listNotificationModules(args?: { platform?: 'mobile' | 'desktop' }): NotificationMiniModule[];
+};
+
 /**
- * Merges event-module notification preview with scheduled calendar events that carry
- * `DEMO_NOTIFICATION_SLOT_TYPE` content slots (same reminder math as event-module events).
+ * Notification host adapter for scheduled-calendar events with notification slots.
  */
 export function createDemoNotificationDispatchService(
-  base: EventService,
   scheduled: ScheduledEventService,
+  modules: NotificationMiniModule[],
   options?: { notificationSlotModuleType?: string }
-): EventService {
+): DemoNotificationDispatchService {
   const slotType = options?.notificationSlotModuleType ?? DEMO_NOTIFICATION_SLOT_TYPE;
   return {
-    ...base,
+    listNotificationModules(args) {
+      if (!args?.platform) return modules;
+      return modules.filter((m) => m.platform === args.platform);
+    },
     async previewNotificationDispatches(args) {
-      const merged = await base.previewNotificationDispatches(args);
       const now = args.now ?? new Date();
       const rows = await scheduled.listInRange({
         userId: args.userId,
@@ -86,7 +87,7 @@ export function createDemoNotificationDispatchService(
         end: args.end,
       });
       const extra = scheduledEventsToNotificationDispatches(rows, now, slotType);
-      return { dispatches: [...merged.dispatches, ...extra] };
+      return { dispatches: extra };
     },
   };
 }

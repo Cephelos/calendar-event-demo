@@ -9,17 +9,17 @@ import { Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } fr
 import { TamaguiProvider } from 'tamagui';
 import type { ModuleRegistry } from '@enhearten/module-picker';
 import { ModulePickerCalendarModal } from '@enhearten/module-picker';
+import { BUILTIN_NOTIFICATION_MODULES } from '@enhearten/notification-modules-builtin';
 import { tamaguiConfig } from './tamagui.config';
 import {
   buildDemoEventContentModules,
   modulePickerStorageKey,
   type ModulePickerSession,
 } from './demoEventContentModules';
-import { createDemoNotificationDispatchService } from './demoNotificationService';
+import { DEMO_NOTIFICATION_SLOT_TYPE, createDemoNotificationDispatchService } from './demoNotificationService';
 
 type Loaded = {
   Calendar: React.ComponentType<any>;
-  eventProvider: any;
   scheduledEventService: any;
   service: any;
   userId: string;
@@ -57,6 +57,161 @@ const NOTIFICATION_MODULE_IDS = {
 
 type ControlsTab = 'events' | 'json' | 'notifications';
 
+function createLegacyCompatibleService(args: {
+  scheduledEventService: any;
+  userId: string;
+}) {
+  const { scheduledEventService, userId } = args;
+  return {
+    listNotificationModules(params?: { platform?: 'mobile' | 'desktop' }) {
+      if (!params?.platform) return BUILTIN_NOTIFICATION_MODULES;
+      return BUILTIN_NOTIFICATION_MODULES.filter((m) => m.platform === params.platform);
+    },
+    async createEvent(params: {
+      input: {
+        userId: string;
+        title: string;
+        start: Date;
+        end: Date;
+        description?: string;
+        mobileNotificationModuleId?: string;
+        desktopNotificationModuleId?: string;
+        notificationLeadMinutes?: number;
+      };
+      checkConflicts?: boolean;
+    }) {
+      const input = params.input;
+      const hasNotif = Boolean(input.mobileNotificationModuleId || input.desktopNotificationModuleId);
+      return scheduledEventService.createEvent({
+        input: {
+          userId: input.userId,
+          title: input.title,
+          description: input.description,
+          start: input.start,
+          end: input.end,
+          contentModules: hasNotif
+            ? [
+                {
+                  instanceId: `slot_${Date.now().toString(16)}`,
+                  moduleType: DEMO_NOTIFICATION_SLOT_TYPE,
+                  config: {
+                    mobileNotificationModuleId: input.mobileNotificationModuleId ?? '',
+                    desktopNotificationModuleId: input.desktopNotificationModuleId ?? '',
+                    notificationLeadMinutes: input.notificationLeadMinutes ?? 10,
+                  },
+                },
+              ]
+            : [],
+        },
+      });
+    },
+    async updateEvent(params: { userId: string; id: string; patch: { title?: string } }) {
+      return scheduledEventService.updateEvent({
+        userId: params.userId,
+        id: params.id,
+        patch: params.patch,
+      });
+    },
+    async deleteEvent(params: { userId: string; id: string }) {
+      return scheduledEventService.deleteEvent(params);
+    },
+    async exportEventsJson(params: { userId: string; start: Date; end: Date }) {
+      const rows = await scheduledEventService.listInRange(params);
+      const mapped = rows.map((e: any) => ({
+        title: e.title,
+        description: e.description,
+        start: new Date(e.start).toISOString(),
+        end: new Date(e.end).toISOString(),
+      }));
+      return JSON.stringify(mapped, null, 2);
+    },
+    async importEventsJsonWithReport(params: {
+      json: string;
+      userId?: string;
+      checkConflicts?: boolean;
+      dedupeWithinPayload?: boolean;
+      continueOnError?: boolean;
+    }) {
+      const parsed = JSON.parse(params.json) as Array<Record<string, unknown>>;
+      const uid = params.userId ?? userId;
+      let createdCount = 0;
+      let skippedDuplicates = 0;
+      const failed: Array<{ index: number; reason: string }> = [];
+      const seen = new Set<string>();
+      for (let i = 0; i < parsed.length; i++) {
+        const item = parsed[i];
+        try {
+          const title = String(item.title ?? '').trim();
+          const start = new Date(String(item.start ?? ''));
+          const end = new Date(String(item.end ?? ''));
+          if (!title || Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) {
+            throw new Error('Invalid row shape');
+          }
+          const fp = `${title}|${start.toISOString()}|${end.toISOString()}`;
+          if (params.dedupeWithinPayload !== false && seen.has(fp)) {
+            skippedDuplicates += 1;
+            continue;
+          }
+          seen.add(fp);
+          await scheduledEventService.createEvent({
+            input: {
+              userId: uid,
+              title,
+              description: typeof item.description === 'string' ? item.description : undefined,
+              start,
+              end,
+              contentModules: [],
+            },
+          });
+          createdCount += 1;
+        } catch (error) {
+          failed.push({ index: i, reason: error instanceof Error ? error.message : String(error) });
+          if (!params.continueOnError) break;
+        }
+      }
+      return { createdCount, skippedDuplicates, failed };
+    },
+    async previewImportEventsJson(params: {
+      json: string;
+      userId?: string;
+      checkConflicts?: boolean;
+      dedupeWithinPayload?: boolean;
+    }) {
+      try {
+        const parsed = JSON.parse(params.json) as Array<Record<string, unknown>>;
+        const seen = new Set<string>();
+        let wouldCreateCount = 0;
+        let skippedDuplicates = 0;
+        const failed: Array<{ index: number; reason: string }> = [];
+        for (let i = 0; i < parsed.length; i++) {
+          const item = parsed[i];
+          const title = String(item.title ?? '').trim();
+          const start = new Date(String(item.start ?? ''));
+          const end = new Date(String(item.end ?? ''));
+          if (!title || Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) {
+            failed.push({ index: i, reason: 'Invalid row shape' });
+            continue;
+          }
+          const fp = `${title}|${start.toISOString()}|${end.toISOString()}`;
+          if (params.dedupeWithinPayload !== false && seen.has(fp)) {
+            skippedDuplicates += 1;
+            continue;
+          }
+          seen.add(fp);
+          wouldCreateCount += 1;
+        }
+        return { wouldCreateCount, skippedDuplicates, failed };
+      } catch (error) {
+        return {
+          wouldCreateCount: 0,
+          skippedDuplicates: 0,
+          failed: [{ index: 0, reason: error instanceof Error ? error.message : String(error) }],
+        };
+      }
+    },
+  };
+}
+
 function DemoApp() {
   const [state, setState] = useState<{ loading: boolean; error: string | null; loaded: Loaded | null }>({
     loading: true,
@@ -76,7 +231,7 @@ function DemoApp() {
 
   const notificationDispatchService = useMemo(() => {
     if (!state.loaded) return null;
-    return createDemoNotificationDispatchService(state.loaded.service, state.loaded.scheduledEventService);
+    return createDemoNotificationDispatchService(state.loaded.scheduledEventService, BUILTIN_NOTIFICATION_MODULES);
   }, [state.loaded]);
 
   const eventContentModules = useMemo(() => {
@@ -97,17 +252,13 @@ function DemoApp() {
     (async () => {
       try {
         const cal = await import('@enhearten/calendar-module');
-        const evt = await import('@enhearten/event-module');
         const mp = await import('@enhearten/module-picker');
 
         const userId = 'demo-user-1';
 
-        const storage = evt.createMemoryEventStorage(evt.SEED_EVENTS.map((e: any) => ({ ...e, userId })));
-        const service = evt.createEventService(storage);
-        const eventProvider = evt.createCalendarEventProvider(service);
-
         const scheduledStorage = cal.createMemoryScheduledEventStorage([]);
         const scheduledEventService = cal.createScheduledEventService(scheduledStorage);
+        const service = createLegacyCompatibleService({ scheduledEventService, userId });
 
         const modulePickerRegistry = mp.createRegistry();
         mp.registerAllSampleModules(modulePickerRegistry);
@@ -118,7 +269,6 @@ function DemoApp() {
           error: null,
           loaded: {
             Calendar: cal.Calendar,
-            eventProvider,
             scheduledEventService,
             service,
             userId,
@@ -536,7 +686,6 @@ function DemoApp() {
           <View style={styles.calendarHost}>
             <state.loaded.Calendar
               key={calendarKey}
-              eventProvider={state.loaded.eventProvider}
               scheduledEventService={state.loaded.scheduledEventService}
               eventContentModules={eventContentModules}
               userId={state.loaded.userId}

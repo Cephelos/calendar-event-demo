@@ -6,13 +6,15 @@
   "scripts": {
     "start": "expo start -c",
     "web": "expo start --web -c",
+    "build:web": "npx expo export --platform web --output-dir dist",
     "ios": "expo start --ios",
     "android": "expo start --android"
   },
   "dependencies": {
     "@babel/runtime": "^7.28.4",
     "@enhearten/calendar-module": "file:../calendar-module",
-    "@enhearten/event-module": "file:../event-module",
+    "@enhearten/notification-contracts": "file:../notification-modules/contracts",
+    "@enhearten/notification-modules-builtin": "file:../notification-modules/builtin",
     "@enhearten/notification-host-react-native": "file:../notification-modules/host-react-native",
     "@enhearten/module-picker": "file:../module-picker",
     "@expo/metro-runtime": "~4.0.1",
