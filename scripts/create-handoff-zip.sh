@@ -11,7 +11,6 @@ BASE_DIR="$(cd "${DEMO_DIR}/.." && pwd)"
 DEMO_NAME="calendar-event-demo"
 DEPENDENT_DIRS=(
   "calendar-module"
-  "event-module"
   "module-picker"
   "notification-modules"
 )

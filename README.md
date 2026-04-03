@@ -4,7 +4,7 @@ Demo app for the embedded calendar architecture:
 
 - `calendar-module` scheduled events (schedule first, then content slots)
 - composable event content modules (notification + module-picker examples)
-- notification host integration that merges dispatches from event-module events and scheduled-event notification slots
+- notification host integration that merges dispatches from scheduled-event notification slots (and related content modules)
 
 ## Run locally
 
@@ -53,7 +53,6 @@ By default it includes:
 
 - `calendar-event-demo`
 - `calendar-module`
-- `event-module`
 - `module-picker`
 - `notification-modules`
 
